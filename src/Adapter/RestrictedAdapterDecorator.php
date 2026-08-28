@@ -19,13 +19,22 @@ use Joomla\Component\Media\Administrator\Exception\FileNotFoundException;
 // phpcs:enable PSR1.Files.SideEffects
 
 /**
- * Wraps a real media adapter and confines every path argument to one folder
- * (e.g. "/123"). A request for the tree root ("/") is transparently
- * redirected into that folder, so the Media Manager opens straight into it
- * instead of showing (or erroring on) the real root. Any path outside the
- * folder — including as a move/copy source or destination — is rejected the
- * same way a genuinely missing file would be, so the Media Manager UI shows
- * a normal "not found" rather than leaking that a restriction is in place.
+ * Wraps a real media adapter and presents one of its folders (e.g. "/123") as
+ * if it were the adapter's own root: every path the caller passes in is
+ * user-space, relative to that virtual root, and every path this class hands
+ * back out (in `getFile`/`getFiles`/`search` results, and the `move`/`copy`
+ * return value) is translated back into that same user-space — per
+ * `AdapterInterface`'s own contract that a returned `path` is "the relative
+ * path to the root". Returning the wrapped adapter's real, `data/`-rooted
+ * paths instead (an earlier version of this class did) breaks the Media
+ * Manager's UI: it requests "/", so its client-side state treats "/" as the
+ * current directory, and every item it gets back claiming to live under
+ * "/123/…" doesn't match — the folder opens but renders empty.
+ *
+ * Because every real path is *computed* by this class (virtual path,
+ * normalized, prefixed with the real root) rather than taken from caller
+ * input and merely checked, there is no separate boundary check to bypass:
+ * a virtual path can only ever resolve under the real root.
  *
  * @since  1.0.0
  */
@@ -33,7 +42,7 @@ final class RestrictedAdapterDecorator implements AdapterInterface
 {
     /**
      * @param   AdapterInterface  $real     The real adapter being wrapped.
-     * @param   string            $ownRoot  The path the user is confined to, e.g. "/123".
+     * @param   string            $ownRoot  The real path this decorator presents as "/", e.g. "/123".
      *
      * @since   1.0.0
      */
@@ -64,17 +73,15 @@ final class RestrictedAdapterDecorator implements AdapterInterface
     }
 
     /**
-     * Collapses "." and ".." segments so a boundary check can't be fooled by
-     * an unresolved traversal sequence (e.g. "/123/../124/secret.jpg" is
-     * "/123/…" as a raw string, but resolves to "/124/secret.jpg"). Joomla's
-     * own LocalAdapter only guarantees the result stays under the shared
-     * `data/` root — not under our per-user subfolder — so this boundary
-     * must resolve the path itself rather than string-prefix-match the raw
-     * input.
+     * Collapses "." and ".." segments in a caller-supplied virtual path
+     * before it's turned into a real one, so a traversal sequence (e.g.
+     * "/../secret") can't resolve outside the boundary once real-rooted.
+     * Anything that tries to climb above the virtual root just flattens to
+     * it — there is nothing above "/" to escape to in virtual space.
      *
-     * @param   string  $path  The raw path requested by the caller.
+     * @param   string  $path  The virtual path as supplied by the caller.
      *
-     * @return  string  The fully resolved, absolute path (no "." or "..").
+     * @return  string  The normalized virtual path (always starts with "/").
      *
      * @since   1.0.0
      */
@@ -100,30 +107,49 @@ final class RestrictedAdapterDecorator implements AdapterInterface
     }
 
     /**
-     * Resolves the effective path for a request and enforces the folder
-     * boundary. Requests for "/" (or anything that resolves to it) are
-     * redirected into the user's own folder.
+     * Translates a caller-supplied virtual path (relative to this decorator's
+     * own presented root) into the real path to pass to the wrapped adapter.
      *
-     * @param   string  $path  The path requested by the caller.
+     * @param   string  $virtualPath  The path as supplied by the caller.
      *
-     * @return  string  The real, resolved path to pass to the wrapped adapter.
-     *
-     * @throws  FileNotFoundException  When the path falls outside the user's folder.
+     * @return  string  The real, `data/`-rooted path.
      *
      * @since   1.0.0
      */
-    private function scopedPath(string $path): string
+    private function toRealPath(string $virtualPath): string
     {
-        $normalized = $this->normalize($path);
+        $normalized = $this->normalize($virtualPath);
 
-        if ($normalized === '/') {
-            return $this->ownRoot;
+        return $normalized === '/' ? $this->ownRoot : $this->ownRoot . $normalized;
+    }
+
+    /**
+     * Translates a real, `data/`-rooted path — as returned by the wrapped
+     * adapter — back into the virtual path this decorator presents to its
+     * caller. The inverse of {@see toRealPath()}.
+     *
+     * @param   string  $realPath  The real path, as returned by the wrapped adapter.
+     *
+     * @return  string  The virtual path (relative to this decorator's own root).
+     *
+     * @throws  FileNotFoundException  When the real path unexpectedly falls outside the user's folder.
+     *
+     * @since   1.0.0
+     */
+    private function toVirtualPath(string $realPath): string
+    {
+        if ($realPath === $this->ownRoot) {
+            return '/';
         }
 
-        if ($normalized === $this->ownRoot || \str_starts_with($normalized, $this->ownRoot . '/')) {
-            return $normalized;
+        if (\str_starts_with($realPath, $this->ownRoot . '/')) {
+            return \substr($realPath, \strlen($this->ownRoot));
         }
 
+        // The wrapped adapter is only ever asked for paths under $ownRoot (via
+        // toRealPath()), so this would mean the real adapter returned something
+        // it was never asked for — treat it the same as a missing file rather
+        // than leak a real path outside the boundary.
         throw new FileNotFoundException(Text::_('COM_MEDIA_ERROR_FILE_NOT_FOUND'));
     }
 
@@ -134,7 +160,10 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function getFile(string $path = '/'): \stdClass
     {
-        return $this->real->getFile($this->scopedPath($path));
+        $file       = $this->real->getFile($this->toRealPath($path));
+        $file->path = $this->toVirtualPath($file->path);
+
+        return $file;
     }
 
     /**
@@ -144,7 +173,13 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function getFiles(string $path = '/'): array
     {
-        return $this->real->getFiles($this->scopedPath($path));
+        $files = $this->real->getFiles($this->toRealPath($path));
+
+        foreach ($files as $file) {
+            $file->path = $this->toVirtualPath($file->path);
+        }
+
+        return $files;
     }
 
     /**
@@ -154,7 +189,7 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function getResource(string $path)
     {
-        return $this->real->getResource($this->scopedPath($path));
+        return $this->real->getResource($this->toRealPath($path));
     }
 
     /**
@@ -164,7 +199,7 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function createFolder(string $name, string $path): string
     {
-        return $this->real->createFolder($name, $this->scopedPath($path));
+        return $this->toVirtualPath($this->real->createFolder($name, $this->toRealPath($path)));
     }
 
     /**
@@ -174,7 +209,7 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function createFile(string $name, string $path, $data): string
     {
-        return $this->real->createFile($name, $this->scopedPath($path), $data);
+        return $this->toVirtualPath($this->real->createFile($name, $this->toRealPath($path), $data));
     }
 
     /**
@@ -184,7 +219,7 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function updateFile(string $name, string $path, $data)
     {
-        $this->real->updateFile($name, $this->scopedPath($path), $data);
+        $this->real->updateFile($name, $this->toRealPath($path), $data);
     }
 
     /**
@@ -194,7 +229,7 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function delete(string $path)
     {
-        $this->real->delete($this->scopedPath($path));
+        $this->real->delete($this->toRealPath($path));
     }
 
     /**
@@ -204,7 +239,9 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function move(string $sourcePath, string $destinationPath, bool $force = false): string
     {
-        return $this->real->move($this->scopedPath($sourcePath), $this->scopedPath($destinationPath), $force);
+        return $this->toVirtualPath(
+            $this->real->move($this->toRealPath($sourcePath), $this->toRealPath($destinationPath), $force)
+        );
     }
 
     /**
@@ -214,7 +251,9 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function copy(string $sourcePath, string $destinationPath, bool $force = false): string
     {
-        return $this->real->copy($this->scopedPath($sourcePath), $this->scopedPath($destinationPath), $force);
+        return $this->toVirtualPath(
+            $this->real->copy($this->toRealPath($sourcePath), $this->toRealPath($destinationPath), $force)
+        );
     }
 
     /**
@@ -224,7 +263,7 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function getUrl(string $path): string
     {
-        return $this->real->getUrl($this->scopedPath($path));
+        return $this->real->getUrl($this->toRealPath($path));
     }
 
     /**
@@ -244,6 +283,12 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     public function search(string $path, string $needle, bool $recursive = false): array
     {
-        return $this->real->search($this->scopedPath($path), $needle, $recursive);
+        $files = $this->real->search($this->toRealPath($path), $needle, $recursive);
+
+        foreach ($files as $file) {
+            $file->path = $this->toVirtualPath($file->path);
+        }
+
+        return $files;
     }
 }

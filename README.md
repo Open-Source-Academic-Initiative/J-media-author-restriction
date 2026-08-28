@@ -39,19 +39,29 @@ ordering). On `onSetupProviders` it:
    (`RestrictedProviderDecorator`), whose adapters are themselves decorators
    (`RestrictedAdapterDecorator`) around the real ones.
 
-The adapter decorator enforces the folder boundary on **every**
-`AdapterInterface` method (`getFile`, `getFiles`, `getResource`,
-`createFolder`, `createFile`, `updateFile`, `delete`, `move` — both source
-*and* destination — `copy` — both paths — `getUrl`, `search`): any path
-outside `/<user id>` throws the same `FileNotFoundException` a genuinely
-missing file would, so the UI shows a normal "not found" rather than a
-different error that would hint a restriction exists. A request for the tree
-root (`/`) is **transparently redirected** into the user's own folder, so
-Media Manager opens straight into it — it looks like their folder *is* the
-root, matching "an author only sees their own folder" literally, including
-for the shared/legacy assets that also live loose in `data/`
-(`business/`, `certs/`, `documents/`, `logos/`, …) — those become invisible
-to a restricted user by design, not just the other users' ID folders.
+The adapter decorator implements `AdapterInterface` by **presenting the
+user's folder as its own root**, translating every path in both directions:
+a caller-supplied path (always relative to "/") is turned into a real path
+by normalizing it and prefixing the user's real folder before calling the
+wrapped adapter, and every path the wrapped adapter hands back (in
+`getFile`/`getFiles`/`search` results, and the `move`/`copy` return value) is
+translated back the other way before it leaves this class. This isn't
+optional polish — `AdapterInterface` documents `path` as "the relative path
+to the root", and the Media Manager UI's own state tracks "what directory am
+I browsing" from the paths it requested; an earlier version of this class
+only did the forward translation (redirecting the request) and returned the
+wrapped adapter's real, `data/`-rooted paths unchanged, which the UI's client
+state didn't match — the folder opened but silently rendered no files. A
+request for the root (`/`) resolves to the user's own folder, so Media
+Manager opens straight into it — it looks like their folder *is* the root,
+matching "an author only sees their own folder" literally, including for the
+shared/legacy assets that also live loose in `data/` (`business/`, `certs/`,
+`documents/`, `logos/`, …) — those become unreachable to a restricted user by
+design, not just the other users' ID folders. Because every real path this
+class ever passes to the wrapped adapter is *computed* (virtual path,
+normalized, then prefixed) rather than taken from caller input and merely
+checked, there's no separate boundary check to bypass — a virtual path can
+only ever resolve under the user's own real folder.
 
 Because every entry point (standalone Media Manager, the Articles Media
 field, the classic AJAX task-based calls, the JSON `ApiController`) resolves
