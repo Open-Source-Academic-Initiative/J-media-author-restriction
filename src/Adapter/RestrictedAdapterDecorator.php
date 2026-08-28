@@ -195,21 +195,35 @@ final class RestrictedAdapterDecorator implements AdapterInterface
     /**
      * @inheritDoc
      *
+     * Unlike {@see move()}/{@see copy()}, the interface documents this as
+     * returning "the new folder name" — a bare name, not a path (the real
+     * adapter may rename it, e.g. for sanitization, but never returns it
+     * path-qualified) — so there is nothing here to translate.
+     *
      * @since   1.0.0
      */
     public function createFolder(string $name, string $path): string
     {
-        return $this->toVirtualPath($this->real->createFolder($name, $this->toRealPath($path)));
+        return $this->real->createFolder($name, $this->toRealPath($path));
     }
 
     /**
      * @inheritDoc
      *
+     * Unlike {@see move()}/{@see copy()}, the interface documents this as
+     * returning "the new file name" — a bare name, not a path — so there is
+     * nothing here to translate. Passing this through {@see toVirtualPath()}
+     * (an earlier version of this method did) always threw: a bare filename
+     * never starts with the user's real folder, so a successful upload still
+     * surfaced as COM_MEDIA_ERROR_FILE_NOT_FOUND to the UI even though the
+     * file was written correctly (visible again after a refresh, since
+     * {@see getFiles()} was never affected).
+     *
      * @since   1.0.0
      */
     public function createFile(string $name, string $path, $data): string
     {
-        return $this->toVirtualPath($this->real->createFile($name, $this->toRealPath($path), $data));
+        return $this->real->createFile($name, $this->toRealPath($path), $data);
     }
 
     /**
