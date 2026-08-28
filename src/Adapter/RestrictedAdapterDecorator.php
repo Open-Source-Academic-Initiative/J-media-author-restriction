@@ -64,12 +64,49 @@ final class RestrictedAdapterDecorator implements AdapterInterface
     }
 
     /**
+     * Collapses "." and ".." segments so a boundary check can't be fooled by
+     * an unresolved traversal sequence (e.g. "/123/../124/secret.jpg" is
+     * "/123/…" as a raw string, but resolves to "/124/secret.jpg"). Joomla's
+     * own LocalAdapter only guarantees the result stays under the shared
+     * `data/` root — not under our per-user subfolder — so this boundary
+     * must resolve the path itself rather than string-prefix-match the raw
+     * input.
+     *
+     * @param   string  $path  The raw path requested by the caller.
+     *
+     * @return  string  The fully resolved, absolute path (no "." or "..").
+     *
+     * @since   1.0.0
+     */
+    private function normalize(string $path): string
+    {
+        $segments = \explode('/', \str_replace('\\', '/', $path));
+        $resolved = [];
+
+        foreach ($segments as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+
+            if ($segment === '..') {
+                \array_pop($resolved);
+                continue;
+            }
+
+            $resolved[] = $segment;
+        }
+
+        return '/' . \implode('/', $resolved);
+    }
+
+    /**
      * Resolves the effective path for a request and enforces the folder
-     * boundary. Requests for "/" are redirected into the user's own folder.
+     * boundary. Requests for "/" (or anything that resolves to it) are
+     * redirected into the user's own folder.
      *
      * @param   string  $path  The path requested by the caller.
      *
-     * @return  string  The real path to pass to the wrapped adapter.
+     * @return  string  The real, resolved path to pass to the wrapped adapter.
      *
      * @throws  FileNotFoundException  When the path falls outside the user's folder.
      *
@@ -77,14 +114,14 @@ final class RestrictedAdapterDecorator implements AdapterInterface
      */
     private function scopedPath(string $path): string
     {
-        if ($path === '/') {
+        $normalized = $this->normalize($path);
+
+        if ($normalized === '/') {
             return $this->ownRoot;
         }
 
-        $normalized = '/' . \trim($path, '/');
-
         if ($normalized === $this->ownRoot || \str_starts_with($normalized, $this->ownRoot . '/')) {
-            return $path;
+            return $normalized;
         }
 
         throw new FileNotFoundException(Text::_('COM_MEDIA_ERROR_FILE_NOT_FOUND'));
