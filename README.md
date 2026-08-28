@@ -97,6 +97,19 @@ After installing:
 2. Confirm its **ordering** is *after* "Filesystem - Local" in the
    `Filesystem` group list (Joomla appends new plugins to the end, so this
    should already be the case — reorder manually if not).
+3. **If installed via CLI `extension:discover:install`** (not the web UI, and
+   not a package upload): that command does **not** fire Joomla's
+   `onExtensionAfterInstall` event, so the core "Extension - Namespace Map"
+   plugin never regenerates `administrator/cache/autoload_psr4.php` — the
+   result is a PHP `Class "...\AuthorRestriction" not found` error the first
+   time *anything* touches Media (e.g. opening the Articles Media field),
+   for every user, not just restricted ones. Fix: rebuild that cache file —
+   either trigger any other extension's real install/update/uninstall
+   through the web UI (regeneration rescans every extension on disk), or
+   instantiate `JNamespacePsr4Map` (`libraries/namespacemap.php`) directly
+   and call `->create()` as the site user (`opensaiwww`), so the regenerated
+   file keeps the right owner. **Always check for this after a CLI-based
+   discover-install of any custom extension on the site**, not just this one.
 
 ## Testing checklist
 
