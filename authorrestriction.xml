@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension type="plugin" group="filesystem" method="upgrade">
+	<name>plg_filesystem_authorrestriction</name>
+	<author>David Toro Triana</author>
+	<authorEmail>dtorot@opensai.org</authorEmail>
+	<authorUrl>https://opensai.org</authorUrl>
+	<creationDate>August 2026</creationDate>
+	<copyright>Copyright (C) 2026 Open Source Academic Initiative (OpenSAI). All rights reserved.</copyright>
+	<license>GNU General Public License version 2 or later; see LICENSE.txt</license>
+	<version>1.0.0</version>
+	<description>PLG_FILESYSTEM_AUTHORRESTRICTION_XML_DESCRIPTION</description>
+	<namespace path="src">OpenSAI\Plugin\Filesystem\AuthorRestriction</namespace>
+	<files>
+		<folder plugin="authorrestriction">services</folder>
+		<folder>src</folder>
+	</files>
+
+	<languages>
+		<language tag="en-GB">language/en-GB/plg_filesystem_authorrestriction.ini</language>
+		<language tag="en-GB">language/en-GB/plg_filesystem_authorrestriction.sys.ini</language>
+	</languages>
+</extension>
