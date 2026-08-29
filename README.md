@@ -4,8 +4,7 @@ A **Joomla 5** plugin that confines the Media Manager — both the standalone
 **System → Media** screen and the Media field picker inside **Articles** — to
 one user's own folder (named after their numeric user ID, e.g. `/123`).
 **Super Users** and members of the **Administrator** group are left untouched
-and keep the full media tree. Built for 
-the 
+and keep the full media tree.
 
 ## Why a plugin, and why this shape
 
@@ -21,7 +20,7 @@ What Joomla *does* have is a **`filesystem` plugin group**: every time
 com_media needs an adapter, it fires an `onSetupProviders` event to that
 group (see `Provider/ProviderManagerHelperTrait.php`), and whichever plugins
 are subscribed hand back `ProviderInterface`/`AdapterInterface` implementations.
-On the site, only the core **"Filesystem - Local"** plugin
+By default, only the core **"Filesystem - Local"** plugin
 (`plg_filesystem_local`) is registered, serving one adapter rooted at
 `data/` (its own `directories` param — *not* `com_media`'s `file_path`/
 `image_path` fields, which are legacy/cosmetic and unused by the actual
@@ -76,16 +75,14 @@ A user is **unrestricted** (full tree) when either is true:
 - `$user->authorise('core.admin')` is true (Super User), or
 - they are a **direct** member of the `Administrator` or `Super Users`
   group (looked up by group **title**, not a hardcoded group ID, in case
-  the site's group tree is ever edited).
+  the group tree is ever edited).
 
 Everyone else who reaches the Media Manager (in practice, the `Manager`
 group) is confined to `/<their user id>`.
 
-If a user doesn't have their folder yet (a brand-new Manager, or the one
-pre-existing gap found during an earlier audit —
-isn't actually an Author so it's harmless there), the plugin creates it
-on first use — best-effort, so a failure just surfaces normally on the next
-real file operation instead of silently succeeding.
+If a user doesn't have their folder yet (e.g. a brand-new Manager), the
+plugin creates it on first use — best-effort, so a failure just surfaces
+normally on the next real file operation instead of silently succeeding.
 
 ## Requirements
 
@@ -117,9 +114,10 @@ After installing:
    either trigger any other extension's real install/update/uninstall
    through the web UI (regeneration rescans every extension on disk), or
    instantiate `JNamespacePsr4Map` (`libraries/namespacemap.php`) directly
-   and call `->create()` as the site user (`opensaiwww`), so the regenerated
-   file keeps the right owner. **Always check for this after a CLI-based
-   discover-install of any custom extension on the site**, not just this one.
+   and call `->create()` as the web server's own user (e.g. `www-data`/
+   `apache`), so the regenerated file keeps the right owner. **Always check
+   for this after a CLI-based
+   discover-install of any custom extension**, not just this one.
 
 ## Testing checklist
 
